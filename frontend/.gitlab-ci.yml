@@ -1,0 +1,64 @@
+variables:
+  TAG_LATEST: $CI_REGISTRY_IMAGE:latest
+  TAG_COMMIT: $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+
+stages:
+  - build_test
+  - build_latest
+  - deploy
+
+before_script:
+  - echo "Starting CI/CD pipeline..."
+
+# Step 1: Build the Docker image to test if everything is fine
+build_image_for_testing:
+  stage: build_test
+  tags:
+    - deployment_group5
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker build --no-cache -t $TAG_COMMIT .
+
+# Step 2: Build the Docker image to deploy from
+build_image_for_deployment:
+  stage: build_latest
+  tags:
+    - deployment_group5
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker build --no-cache -t $TAG_COMMIT -t $TAG_LATEST .
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker push $TAG_COMMIT
+    - docker push $TAG_LATEST
+  only:
+    variables:
+      #- $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      #- $CI_COMMIT_BRANCH == $CI_COMMIT_BRANCH
+      - $CI_COMMIT_BRANCH == "sprint-3"
+
+# Step 3: Deploy to Server using SSH & Docker
+deploy:
+  stage: deploy
+  tags:
+    - deployment_group5
+  image: alpine:latest
+  variables:
+    container_name: iMF-frontend
+  script:
+    - echo "Deploying to server..."
+    - chmod og= $NETLAB_SSH
+    - apk update && apk add openssh-client
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY"
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker pull $TAG_LATEST"
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker container rm -f $container_name || true"
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker run -d -p 3002:3000 --restart unless-stopped --name $container_name $TAG_LATEST"
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker system prune --force"
+  only:
+    variables:
+      #- $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      #- $CI_COMMIT_BRANCH == $CI_COMMIT_BRANCH
+      - $CI_COMMIT_BRANCH == "sprint-3"

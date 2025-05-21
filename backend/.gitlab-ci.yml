@@ -1,0 +1,85 @@
+variables:
+  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version -DinstallAtEnd=true -DdeployAtEnd=true"
+  TAG_LATEST: $CI_REGISTRY_IMAGE:latest
+  TAG_COMMIT: $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME:$CI_COMMIT_SHORT_SHA
+  PACKAGE_MODE: production
+
+image: maven:3-eclipse-temurin-21 # You can change 'latest' to the version that works best for your project. Latest might break in the future when new updates are released
+
+stages:
+  - test
+  - visualize
+  - build
+  - deploy
+
+cache:
+  paths:
+    - .m2/repository
+
+verify:
+  stage: test
+  script:
+    - mvn $MAVEN_CLI_OPTS clean org.jacoco:jacoco-maven-plugin:prepare-agent jacoco:report verify
+    - cat target/site/jacoco/index.html | grep -o 'Total[^%]*%'
+  coverage: '/Total.*?([0-9]{1,3})%/'
+  artifacts:
+    paths:
+      - target/site/jacoco/jacoco.xml
+    reports:
+      junit:
+        - target/surefire-reports/TEST-*.xml
+        - target/failsafe-reports/TEST-*.xml
+
+coverage:
+  stage: visualize
+  image: registry.gitlab.com/haynes/jacoco2cobertura:1.0.10
+  script:
+    # convert report from jacoco to cobertura, using relative project path
+    - python /opt/cover2cover.py target/site/jacoco/jacoco.xml $CI_PROJECT_DIR/src/main/java/ > target/site/cobertura.xml
+    - python /opt/source2filename.py target/site/cobertura.xml
+  needs: ["verify"]
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: target/site/cobertura.xml
+
+build:
+  stage: build
+  tags:
+    - deployment_group5
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker build --no-cache -t $TAG_COMMIT -t $TAG_LATEST .
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker push $TAG_COMMIT
+    - docker push $TAG_LATEST
+  only:
+    variables:
+      #- $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      #- $CI_COMMIT_BRANCH == $CI_COMMIT_BRANCH
+      - $CI_COMMIT_BRANCH == "sprint-3"
+
+deploy:
+  stage: deploy
+  tags:
+    - deployment_group5
+  image: alpine:latest
+  variables:
+    remote_dir: ~/docker/imagineFrame
+  script:
+    # Code for deployment here
+    - chmod og= $NETLAB_SSH
+    - apk update && apk add openssh-client
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY"
+    - scp -i $NETLAB_SSH -o StrictHostKeyChecking=no compose-imf-backend.yml $NETLAB_USER@$NETLAB_IP:~/docker/imagineFrame/compose-imf-backend.yml
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker compose -f ${remote_dir}/compose-imf-backend.yml --env-file ${remote_dir}/imf-backend.env pull"
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker compose -f ${remote_dir}/compose-imf-backend.yml --env-file ${remote_dir}/imf-backend.env up -d"
+    - ssh -i $NETLAB_SSH -o StrictHostKeyChecking=no $NETLAB_USER@$NETLAB_IP "docker system prune --force"
+  only:
+    variables:
+      #- $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      #- $CI_COMMIT_BRANCH == $CI_COMMIT_BRANCH
+      - $CI_COMMIT_BRANCH == "sprint-3"

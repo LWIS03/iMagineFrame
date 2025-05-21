@@ -1,0 +1,28 @@
+---
+services:
+  imf-postgres:
+    image: postgres:17-alpine
+    container_name: ${DB_HOST}
+    hostname: ${DB_HOST}
+    user: ${PUID}:${PGID}
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PW}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - ./imf-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  imf-backend:
+    image: gitlab.ilabt.imec.be:4567/team-peter-hellinckx/courses/software-engineering/projects-2025/group-5/imagineframe-backend:latest
+    container_name: imf-backend
+    hostname: imf-backend
+    environment:
+      - IMF_DB_USER=${DB_USER}
+      - IMF_DB_PW=${DB_PW}
+      - IMF_DB_NAME=${DB_NAME}
+      - IMF_DB_HOST=${DB_HOST}
+      - IMF_FRONTEND_URL=${FRONTEND_URL}
+    ports:
+      - 8081:8080
+    restart: unless-stopped
